@@ -272,6 +272,7 @@ class Agent_GraphMedNCA(BaseAgent):
             # For saving images
             import numpy as np
             import matplotlib.pyplot as plt
+            from matplotlib.gridspec import GridSpec
             
             # Calculate Dice score for each test image
             total_dice = 0.0
@@ -308,11 +309,11 @@ class Agent_GraphMedNCA(BaseAgent):
                     img = img.to(self.model.device)
                     label = label.to(self.model.device)
                     
-                    # Get prediction
-                    prediction = self.model(img, steps=steps)
+                    # Get prediction WITH graph visualization data
+                    prediction, graph_data = self.model(img, steps=steps, return_graph=True)
+                    img_tensor, edge_index = graph_data
                     
-                    # Apply sigmoid for binary segmentation
-                    prediction = torch.sigmoid(prediction)
+                    # Apply sigmoid for binary segmentation (already done in forward)
                     
                     # Threshold predictions at 0.5 for binary segmentation
                     prediction_binary = (prediction > 0.5).float()
@@ -362,29 +363,50 @@ class Agent_GraphMedNCA(BaseAgent):
                         if len(true_mask.shape) > 2 and true_mask.shape[0] > 0:
                             true_mask = true_mask[0]
                         
-                        # Create matplotlib figure with subplots
-                        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+                        # Create matplotlib figure with 2x2 grid instead of 1x3
+                        fig = plt.figure(figsize=(15, 12))
+                        gs = GridSpec(2, 2, figure=fig)
                         
-                        # Plot original image
+                        # Original image - top left
+                        ax1 = fig.add_subplot(gs[0, 0])
                         if len(orig_img.shape) == 3:  # Color image
-                            axes[0].imshow(orig_img)
+                            ax1.imshow(orig_img)
                         else:  # Grayscale
-                            axes[0].imshow(orig_img, cmap='gray')
-                        axes[0].set_title("Original")
-                        axes[0].axis('off')
+                            ax1.imshow(orig_img, cmap='gray')
+                        ax1.set_title("Original")
+                        ax1.axis('off')
                         
-                        # Plot prediction
-                        axes[1].imshow(pred_mask, cmap='gray')
-                        axes[1].set_title("Prediction")
-                        axes[1].axis('off')
+                        # Prediction - top right
+                        ax2 = fig.add_subplot(gs[0, 1])
+                        ax2.imshow(pred_mask, cmap='gray')
+                        ax2.set_title("Prediction")
+                        ax2.axis('off')
                         
-                        # Plot ground truth
-                        axes[2].imshow(true_mask, cmap='gray')
-                        axes[2].set_title("Ground Truth")
-                        axes[2].axis('off')
+                        # Ground truth - bottom left
+                        ax3 = fig.add_subplot(gs[1, 0])
+                        ax3.imshow(true_mask, cmap='gray')
+                        ax3.set_title("Ground Truth")
+                        ax3.axis('off')
+                        
+                        # Graph visualization - bottom right
+                        ax4 = fig.add_subplot(gs[1, 1])
+                        if edge_index is not None:
+                            from src.models.GraphMedNCA import visualize_graph
+                            # Draw graph on the subplot
+                            img_tensor_cpu = img_tensor.cpu()
+                            # Create smaller figure for graph visualization
+                            graph_fig = visualize_graph(img_tensor_cpu, edge_index)
+                            # Convert graph_fig to image and display on ax4
+                            ax4.imshow(self._fig2img(graph_fig))
+                            plt.close(graph_fig)  # Close the temporary figure
+                        else:
+                            ax4.text(0.5, 0.5, "Graph visualization not available", 
+                                    horizontalalignment='center', verticalalignment='center')
+                        ax4.set_title("Graph Connections")
+                        ax4.axis('off')
                         
                         # Add Dice score as text
-                        plt.figtext(0.5, 0.001, f"Dice Score: {dice.item():.4f}", ha="center", fontsize=12,
+                        plt.figtext(0.5, 0.01, f"Dice Score: {dice.item():.4f}", ha="center", fontsize=12,
                                   bbox={"facecolor":"orange", "alpha":0.8, "pad":5})
                         
                         # Save figure
@@ -395,6 +417,8 @@ class Agent_GraphMedNCA(BaseAgent):
                         
                     except Exception as save_error:
                         log_message(f"Error saving segmentation maps for image {img_id}: {str(save_error)}", "ERROR", module, self.log_enabled, self.projectConfig)
+                        import traceback
+                        traceback.print_exc()
             
             # Calculate average Dice score across all test images
             avg_dice = total_dice / len(test_indices) if test_indices else 0.0
@@ -408,7 +432,26 @@ class Agent_GraphMedNCA(BaseAgent):
             import traceback
             traceback.print_exc()
             return 0.0
+
+    def _fig2img(self, fig):
+        """Convert a Matplotlib figure to a numpy array"""
+        import numpy as np
+        import io
+        from PIL import Image
         
+        # Save figure to a PNG in memory
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', bbox_inches='tight')
+        buf.seek(0)
+        
+        # Load PNG into a numpy array via PIL
+        img = np.array(Image.open(buf))
+        
+        # Close the buffer
+        buf.close()
+        
+        return img
+    
     def getAverageDiceScore(self):
         """
         Evaluate model on test set using Dice score

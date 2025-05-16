@@ -17,41 +17,43 @@ class GrapherModule(nn.Module):
         x = self.gat(x, edge_index)
         return F.relu(x)
     
-def visualize_graph(self, image_tensor, edge_index, epoch, num_nodes=50):
-        """Visualize graph connections on image patches"""
-        plt.figure(figsize=(10, 10))
+def visualize_graph(image_tensor, edge_index, num_nodes=200):
+    """Visualize graph connections on image patches"""
+    # Create figure for this visualization
+    fig = plt.figure(figsize=(10, 10))
+    
+    # Convert tensor to numpy image (handle both 1-channel and 3-channel)
+    img = image_tensor.cpu()
+    if img.shape[0] == 1:
+        img = img.repeat(3, 1, 1)  # Convert to RGB
+    img = img.permute(1, 2, 0).numpy()
+    plt.imshow(img)
+    
+    # Get node positions
+    H, W = image_tensor.shape[1], image_tensor.shape[2]
+    coords = torch.stack(torch.meshgrid(
+        torch.linspace(0, 1, H, device='cpu'),
+        torch.linspace(0, 1, W, device='cpu'),
+        indexing='ij'
+    ), dim=-1).view(H*W, 2)
+    
+    # Plot subset of nodes and connections
+    nodes = np.random.choice(len(coords), min(num_nodes, len(coords)))
+    for node in nodes:
+        x, y = coords[node]
+        plt.scatter(y*W, x*H, c='red', s=10)
         
-        # Convert tensor to numpy image (handle both 1-channel and 3-channel)
-        img = image_tensor.cpu()
-        if img.shape[0] == 1:
-            img = img.repeat(3, 1, 1)  # Convert to RGB
-        img = img.permute(1, 2, 0).numpy()
-        plt.imshow(img)
-        
-        # Get node positions
-        H, W = image_tensor.shape[1], image_tensor.shape[2]
-        coords = torch.stack(torch.meshgrid(
-            torch.linspace(0, 1, H, device='cpu'),
-            torch.linspace(0, 1, W, device='cpu'),
-            indexing='ij'
-        ), dim=-1).view(H*W, 2)
-        
-        # Plot subset of nodes and connections
-        nodes = np.random.choice(len(coords), min(num_nodes, len(coords)))
-        for node in nodes:
-            x, y = coords[node]
-            plt.scatter(y*W, x*H, c='red', s=10)
+        # Plot connections (limit to 4 for clarity)
+        neighbors = edge_index[1][edge_index[0] == node]
+        for neighbor in neighbors[:4]:
+            nx, ny = coords[neighbor]
+            plt.plot([y*W, ny*W], [x*H, nx*H], 'r-', alpha=0.3)
             
-            # Plot connections (limit to 4 for clarity)
-            neighbors = edge_index[1][edge_index[0] == node]
-            for neighbor in neighbors[:4]:
-                nx, ny = coords[neighbor]
-                plt.plot([y*W, ny*W], [x*H, nx*H], 'r-', alpha=0.3)
-                
-        plt.title(f'Graph Connections - Epoch {epoch+1}')
-        plt.axis('off')
-        plt.savefig(f'./graphs/graph_vis_epoch_{epoch+1}.png')
-        plt.close()
+    plt.title('Graph Connections')
+    plt.axis('off')
+    
+    # Instead of saving, return the figure for embedding in subplots
+    return fig
 
 
 def image_to_graph(feature_map, k=8, log_enabled=False):
@@ -80,9 +82,6 @@ class GraphMedNCA(nn.Module):
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.log_enabled = log_enabled
         
-        module = f"{__name__}:init" if log_enabled else ""
-        # log_message(f"Initializing GraphMedNCA with {hidden_channels} hidden channels on {self.device}", "INFO", module, log_enabled)
-        
         # Graph-based perception module
         self.encoder = nn.Sequential(
             nn.Conv2d(n_channels, 64, 3, padding=1),
@@ -106,61 +105,83 @@ class GraphMedNCA(nn.Module):
         # Output layers
         self.to_output = nn.Conv2d(hidden_channels, n_channels, 1)
         
-    def graph_process(self, fmap):
+    def graph_process(self, fmap, return_graph=False):
         try:
             module = f"{__name__}:graph_process" if self.log_enabled else ""
             graphs = image_to_graph(fmap, log_enabled=self.log_enabled)
-            # log_message(f"Processing {len(graphs)} graphs", "INFO", module, self.log_enabled)
             outputs = []
+            
+            # Store the first graph's edge_index for visualization if requested
+            edge_index = None
+            if return_graph and len(graphs) > 0:
+                edge_index = graphs[0].edge_index
 
             for i, g in enumerate(graphs):
                 out = self.grapher(g.x.to(fmap.device), g.edge_index.to(fmap.device))
-                # log_message(f"Graph {i}: output shape {out.shape}", "STATUS", module, self.log_enabled)
                 H, W = fmap.shape[2], fmap.shape[3]
                 out = out.permute(1, 0).view(-1, H, W)
                 outputs.append(out)
 
-            return torch.stack(outputs)
+            result = torch.stack(outputs)
+            
+            if return_graph:
+                return result, edge_index
+            else:
+                return result
+                
         except Exception as e:
             log_message(f"Error in graph_process: {str(e)}", "ERROR", module, self.log_enabled)
             import traceback
             traceback.print_exc()
             # Return input as fallback
-            return fmap
+            if return_graph:
+                return fmap, None
+            else:
+                return fmap
         
-    def forward(self, x, steps=1):
+    def forward(self, x, steps=1, return_graph=False):
         """
         Forward pass with error handling and progress tracking
+        
+        Args:
+            x: Input tensor
+            steps: Number of NCA steps to run
+            return_graph: If True, returns graph visualization data along with output
         """
         try:
             module = f"{__name__}:forward" if self.log_enabled else ""
-            # log_message(f"Starting forward pass with input shape: {x.shape}", "INFO", module, self.log_enabled)
             
             # Initial encoding
             h = self.encoder(x)
-            # log_message(f"After encoding, shape: {h.shape}", "STATUS", module, self.log_enabled)
+            
+            # Store graph visualization data if requested
+            graph_edge_index = None
             
             # Run NCA steps
             for step in range(steps):
-                # log_message(f"NCA step {step+1}/{steps}", "STATUS", module, self.log_enabled)
                 # Apply graph-based perception to create perception vector
-                p = self.graph_process(h)
-                # log_message(f"Perception vector shape: {p.shape}", "STATUS", module, self.log_enabled)
+                if return_graph and step == steps-1:  # Only keep the last step's graph
+                    p, graph_edge_index = self.graph_process(h, return_graph=True)
+                else:
+                    p = self.graph_process(h)
                 
                 # Update cell states using perception vector
                 update = self.update_net(p)
-                # log_message(f"Update shape: {update.shape}", "STATUS", module, self.log_enabled)
                 
                 # Stochastic update with fire rate
                 mask = torch.rand_like(update[:, :1], device=self.device) < self.fire_rate
                 mask = mask.float().repeat(1, self.hidden_channels, 1, 1)
                 h = h + mask * update
-                # log_message(f"Updated state shape: {h.shape}", "STATUS", module, self.log_enabled)
             
             # Generate output
             out = self.to_output(h)
-            # log_message(f"Output shape before sigmoid: {out.shape}", "SUCCESS", module, self.log_enabled)
-            return torch.sigmoid(out)
+            output = torch.sigmoid(out)
+            
+            if return_graph:
+                # Return the output and graph visualization data
+                return output, (x[0], graph_edge_index)  # Return first input image and edge_index
+            else:
+                return output
             
         except Exception as e:
             module = f"{__name__}:forward" if self.log_enabled else ""
@@ -168,5 +189,9 @@ class GraphMedNCA(nn.Module):
             log_message(f"Input shape: {x.shape}, dtype: {x.dtype}", "WARNING", module, self.log_enabled)
             import traceback
             traceback.print_exc()
-            # Return a dummy output for debugging
-            return torch.zeros_like(x)
+            
+            # Return dummy outputs based on return_graph parameter
+            if return_graph:
+                return torch.zeros_like(x), (x[0], None)
+            else:
+                return torch.zeros_like(x)
