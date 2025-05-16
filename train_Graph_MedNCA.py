@@ -47,10 +47,10 @@ def get_next_run_id(runs_dir):
 
 # Configure experiment
 config = [{
-    'img_path': r"/home/teaching/group21/Dataset/2016_sample_img/2016_actual/2016_actual",
-    'label_path': r"/home/teaching/group21/Dataset/2016_sample_img/2016_masked/2016_masked",
-    # 'img_path': r"/home/teaching/group21/Dataset/ISIC2018_Task1-2_Training_Input",
-    # 'label_path': r"/home/teaching/group21/Dataset/ISIC2018_Task1_Training_GroundTruth",
+    # 'img_path': r"/home/teaching/group21/Dataset/2016_sample_img/2016_actual/2016_actual",
+    # 'label_path': r"/home/teaching/group21/Dataset/2016_sample_img/2016_masked/2016_masked",
+    'img_path': r"/home/teaching/group21/Dataset/ISIC2018_Task1-2_Training_Input",
+    'label_path': r"/home/teaching/group21/Dataset/ISIC2018_Task1_Training_GroundTruth",
     # 'model_path': r'/home/teaching/group21/med_nca/M3D-NCA/model_path',
     'base_path': r'/home/teaching/group21/med_nca/M3D-NCA/runs',
     'device': "cuda",  # Use CPU for now for stability - change to cuda if needed
@@ -60,17 +60,17 @@ config = [{
     'lr_gamma': 0.9999,
     'betas': (0.9, 0.99),
     # Training config
-    'save_interval': 5,
+    'save_interval': 10,
     'evaluate_interval': 2,
     'n_epoch': 2,   # Reduced to test the setup first
-    #was 16, changed for testing the eval part
-    'batch_size': 4,  # Reduced to avoid memory issues during debugging
+                    # was 16, changed for testing the eval part
+    'batch_size': 64,  # Reduced to avoid memory issues during debugging
     # Data
     'input_size': (64, 64),
     'data_split': [0.7, 0, 0.3], 
     # Graph-NCA parameters
     'hidden_channels': 32,  # Reduced for faster training during debugging
-    'nca_steps': 8,
+    'nca_steps': 16,
     'fire_rate': 0.5,
     # For JPG dataset
     'input_channels': 1,
@@ -79,7 +79,6 @@ config = [{
     'verbose_logging': True,
     'inference_steps' : 16,
 }]
-
 
 
 def check_image_label_directories(img_path, label_path, log_enabled=True):
@@ -240,9 +239,9 @@ def main(log_enabled=True):
         else:
             print("\n=== EVALUATING MODEL ===\n")
 
-        agent.test(data_loader, loss_function)      
-        dice_score = agent.getAverageDiceScore()
-        agent.evaluate(data_loader, loss_function)
+        # agent.test(data_loader, loss_function)      
+        dice_score = agent.getAverageDiceScore_withimsave()
+        # agent.evaluate(data_loader, loss_function)
 
 
         if log_enabled:

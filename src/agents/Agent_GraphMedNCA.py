@@ -11,7 +11,7 @@ class Agent_GraphMedNCA(BaseAgent):
         super(Agent_GraphMedNCA, self).__init__(model)
         self.experiment = None  # Will be set later by Experiment class
         self.log_enabled = log_enabled
-        self.config = config  # Store the config for later use
+        self.projectConfig = config  # Store the config for later use
         
     def set_exp(self, experiment):
         """
@@ -46,7 +46,7 @@ class Agent_GraphMedNCA(BaseAgent):
         )
         
         module = f"{__name__}" if self.log_enabled else ""
-        log_message(f"Optimizer initialized with lr={lr}, betas={betas}", "SUCCESS", module, self.log_enabled)
+        log_message(f"Optimizer initialized with lr={lr}, betas={betas}", "SUCCESS", module, self.log_enabled, self.projectConfig)
     
     def process_epoch(self, epoch, loss):
         """
@@ -67,10 +67,10 @@ class Agent_GraphMedNCA(BaseAgent):
                 torch.save(self.model.state_dict(), save_path)
                 
                 module = f"{__name__}" if self.log_enabled else ""
-                log_message(f"Model saved at epoch {epoch}", "SUCCESS", module, self.log_enabled)
+                log_message(f"Model saved at epoch {epoch}", "SUCCESS", module, self.log_enabled, self.projectConfig)
         except Exception as e:
             module = f"{__name__}" if self.log_enabled else ""
-            log_message(f"Error saving model: {str(e)}", "ERROR", module, self.log_enabled)
+            log_message(f"Error saving model: {str(e)}", "ERROR", module, self.log_enabled, self.projectConfig)
     
     def _get_actual_data(self, data_batch):
         """
@@ -114,7 +114,7 @@ class Agent_GraphMedNCA(BaseAgent):
             
         except Exception as e:
             module = f"{__name__}" if self.log_enabled else ""
-            log_message(f"Error processing data batch: {str(e)}", "ERROR", module, self.log_enabled)
+            log_message(f"Error processing data batch: {str(e)}", "ERROR", module, self.log_enabled, self.projectConfig)
             return None, None
         
     def train(self, data_loader, loss_function):
@@ -133,7 +133,7 @@ class Agent_GraphMedNCA(BaseAgent):
         batch_size = self.experiment.get_from_config('batch_size')
         
         module = f"{__name__}" if self.log_enabled else ""
-        log_message(f"Starting training for {n_epoch} epochs with {steps} NCA steps", "INFO", module, self.log_enabled)
+        log_message(f"Starting training for {n_epoch} epochs with {steps} NCA steps", "INFO", module, self.log_enabled, self.projectConfig)
         
         # Training loop
         for epoch in tqdm(range(n_epoch)):
@@ -141,7 +141,7 @@ class Agent_GraphMedNCA(BaseAgent):
             batch_count = 0
             total_images = len(dataset)
             
-            log_message(f"Epoch {epoch+1}/{n_epoch}: Processing {total_images} images in batches of {batch_size}", "INFO", module, self.log_enabled)
+            log_message(f"Epoch {epoch+1}/{n_epoch}: Processing {total_images} images in batches of {batch_size}", "INFO", module, self.log_enabled, self.projectConfig)
             
             # Process images directly using dataset instead of dataloader
             # since the dataloader isn't providing the right format
@@ -162,7 +162,7 @@ class Agent_GraphMedNCA(BaseAgent):
                             batch_labels.append(label)
                     
                     if len(batch_data) == 0:
-                        log_message(f"Warning: Empty batch from {batch_start} to {batch_end}", "WARNING", module, self.log_enabled)
+                        log_message(f"Warning: Empty batch from {batch_start} to {batch_end}", "WARNING", module, self.log_enabled, self.projectConfig)
                         continue
                         
                     # Stack tensors
@@ -187,11 +187,11 @@ class Agent_GraphMedNCA(BaseAgent):
                     batch_count += 1
                     
                     # Print occasional batch updates
-                    if batch_count % 10 == 0:
-                        log_message(f"Epoch {epoch+1}, Batch {batch_count}, Loss: {loss.item():.4f}", "STATUS", module, self.log_enabled)
+                    if batch_count % 2 == 0:
+                        log_message(f"Epoch {epoch+1}, Batch {batch_count}, Loss: {loss.item():.4f}", "STATUS", module, self.log_enabled, self.projectConfig)
                         
                 except Exception as e:
-                    log_message(f"Error processing batch {batch_start}-{batch_end}: {str(e)}", "ERROR", module, self.log_enabled)
+                    log_message(f"Error processing batch {batch_start}-{batch_end}: {str(e)}", "ERROR", module, self.log_enabled, self.projectConfig)
                     import traceback
                     traceback.print_exc()
                     continue
@@ -201,12 +201,215 @@ class Agent_GraphMedNCA(BaseAgent):
                 avg_loss /= batch_count
                 
             # Log progress
-            log_message(f"Epoch {epoch+1}/{n_epoch}, Average Loss: {avg_loss:.4f}", "SUCCESS", module, self.log_enabled)
+            log_message(f"Epoch {epoch+1}/{n_epoch}, Average Loss: {avg_loss:.4f}", "SUCCESS", module, self.log_enabled, self.projectConfig)
             
             # Process epoch (save checkpoints, etc.)
             self.process_epoch(epoch, avg_loss)
             
-        log_message(" Training completed! ", "SUCCESS", module, self.log_enabled)
+        log_message(" Training completed! ", "SUCCESS", module, self.log_enabled, self.projectConfig)
+
+    def getAverageDiceScore_withimsave(self):
+        """
+        Evaluate model on test set using Dice score and save segmentation maps
+        
+        This function does everything that getAverageDiceScore does plus saves the segmentation maps to files in runs/outputs directory
+        """
+        module = f"{__name__}" if self.log_enabled else ""
+        
+        if self.experiment is None:
+            log_message("Experiment not set. Call set_exp() before evaluation.", "ERROR", module, self.log_enabled, self.projectConfig)
+            return 0.0
+            
+        # Create output directory for segmentation maps
+        output_dir = os.path.join(self.projectConfig[0]['model_path'], "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        log_message(f"Segmentation maps will be saved to {output_dir}", "INFO", module, self.log_enabled, self.projectConfig)
+            
+        # Set model to evaluation mode
+        self.model.eval()
+        
+        # Get the dataset and test indices
+        try:
+            dataset = self.experiment.dataset
+            
+            # Handle different implementations of DataSplit
+            if hasattr(self.experiment.data_split, 'get_test_indices'):
+                test_indices = self.experiment.data_split.get_test_indices()
+            elif hasattr(self.experiment.data_split, 'test'):
+                # If there's a 'test' attribute that contains indices
+                test_indices = self.experiment.data_split.test
+            else:
+                # Fallback: try to access the test dictionary directly
+                try:
+                    # Assuming the data_split object has a dictionary structure with 'test' key
+                    test_indices = list(range(len(dataset)))[-int(len(dataset) * 0.3):]  # Use last 30% as test by default
+                    log_message("Using fallback test indices (last 30% of dataset)", "WARNING", module, self.log_enabled, self.projectConfig)
+                except Exception as inner_e:
+                    log_message(f"Could not determine test indices: {str(inner_e)}", "ERROR", module, self.log_enabled, self.projectConfig)
+                    test_indices = []
+            
+            if not test_indices:
+                log_message("No test data available for evaluation", "WARNING", module, self.log_enabled, self.projectConfig)
+                return 0.0
+                
+            log_message(f"Evaluating model on {len(test_indices)} test images", "INFO", module, self.log_enabled, self.projectConfig)
+            
+            # Get inference steps from config
+            steps = self.experiment.get_from_config('inference_steps')
+            if steps is None:
+                steps = 64  # Default to 64 steps if not specified in config
+                log_message(f"No inference_steps in config, using default: {steps}", "WARNING", module, self.log_enabled, self.projectConfig)
+            
+            # For saving images
+            import numpy as np
+            from PIL import Image
+            
+            # Calculate Dice score for each test image
+            total_dice = 0.0
+            with torch.no_grad():
+                for idx in tqdm(test_indices):
+                    # Get test image and label
+                    item = dataset[idx]
+                    
+                    # Get image identifier for saving files
+                    img_id = None
+                    if isinstance(item, tuple) and len(item) == 3:
+                        # Format: (image_id, image, label)
+                        img_id, img, label = item
+                    elif isinstance(item, tuple) and len(item) == 2:
+                        # Format: (image, label)
+                        img, label = item
+                        img_id = f"image_{idx}"  # Create a default ID if none is provided
+                    elif isinstance(item, dict):
+                        # Format: {'image': img, 'label': label}
+                        img = item['image']
+                        label = item['label']
+                        img_id = item.get('name', f"image_{idx}")  # Use 'name' key if available
+                    else:
+                        log_message(f"Unsupported item format: {type(item)}", "ERROR", module, self.log_enabled, self.projectConfig)
+                        continue
+                    
+                    # Ensure proper tensor dimensions [batch, channel, height, width]
+                    if len(img.shape) == 3:  # [channel, height, width]
+                        img = img.unsqueeze(0)  # Add batch dimension
+                    if len(label.shape) == 3:  # [channel, height, width]
+                        label = label.unsqueeze(0)
+                    
+                    # Move to device
+                    img = img.to(self.model.device)
+                    label = label.to(self.model.device)
+                    
+                    # Get prediction
+                    prediction = self.model(img, steps=steps)
+                    
+                    # Apply sigmoid for binary segmentation
+                    prediction = torch.sigmoid(prediction)
+                    
+                    # Threshold predictions at 0.5 for binary segmentation
+                    prediction_binary = (prediction > 0.5).float()
+                    
+                    # Compute Dice coefficient manually
+                    # Flatten tensors
+                    pred_flat = prediction_binary.view(-1)
+                    label_flat = label.view(-1)
+                    
+                    # Calculate intersection and compute Dice
+                    intersection = (pred_flat * label_flat).sum()
+                    dice = (2. * intersection + 1) / (pred_flat.sum() + label_flat.sum() + 1)
+                    
+                    total_dice += dice.item()
+                    
+                    # Log dice score periodically
+                    if idx % 4 == 0:
+                        log_message(f"Test image {idx}: Dice score = {dice.item():.4f} (steps={steps})", "INFO", module, self.log_enabled, self.projectConfig)
+                    
+                    # Save segmentation maps and original images
+                    try:
+                        # Process filename to be safe for filesystems
+                        if isinstance(img_id, str):
+                            safe_filename = ''.join(c for c in img_id if c.isalnum() or c in '._-')
+                        else:
+                            safe_filename = f"image_{idx}"
+                            
+                        # Convert tensors to numpy for saving
+                        orig_img = img[0].cpu().numpy()  # Remove batch dimension
+                        pred_mask = prediction_binary[0].cpu().numpy()
+                        true_mask = label[0].cpu().numpy()
+                        
+                        # Handle multi-channel images by taking first channel or converting to RGB
+                        if orig_img.shape[0] > 1:  # Multi-channel
+                            if orig_img.shape[0] == 3:  # RGB
+                                # Transpose from (C,H,W) to (H,W,C) for PIL
+                                orig_img = np.transpose(orig_img, (1, 2, 0))
+                                orig_img = (orig_img * 255).astype(np.uint8)
+                                orig_pil = Image.fromarray(orig_img)
+                            else:
+                                # Just take first channel
+                                orig_img = orig_img[0]
+                                orig_img = (orig_img * 255).astype(np.uint8)
+                                orig_pil = Image.fromarray(orig_img)
+                        else:
+                            orig_img = orig_img[0]
+                            orig_img = (orig_img * 255).astype(np.uint8)
+                            orig_pil = Image.fromarray(orig_img)
+                            
+                        # Prepare mask images (take first channel if multiple)
+                        if len(pred_mask.shape) > 2 and pred_mask.shape[0] > 0:
+                            pred_mask = pred_mask[0]
+                        if len(true_mask.shape) > 2 and true_mask.shape[0] > 0:
+                            true_mask = true_mask[0]
+                            
+                        # Convert masks to 8-bit images
+                        pred_mask_img = (pred_mask * 255).astype(np.uint8)
+                        true_mask_img = (true_mask * 255).astype(np.uint8)
+                        
+                        # Create PIL images
+                        pred_pil = Image.fromarray(pred_mask_img)
+                        true_pil = Image.fromarray(true_mask_img)
+                        
+                        # Save all images
+                        # orig_pil.save(os.path.join(output_dir, f"{safe_filename}_original.png"))
+                        # pred_pil.save(os.path.join(output_dir, f"{safe_filename}_prediction.png"))
+                        # true_pil.save(os.path.join(output_dir, f"{safe_filename}_ground_truth.png"))
+                        
+                        # Create a side-by-side comparison image
+                        from PIL import Image, ImageDraw
+                        
+                        # Create a new wide image to hold all three images
+                        width = max(orig_img.shape[1], pred_mask_img.shape[1], true_mask_img.shape[1])
+                        height = max(orig_img.shape[0], pred_mask_img.shape[0], true_mask_img.shape[0])
+                        comparison = Image.new('RGB', (width*3 + 20, height + 30), color='white')
+                        
+                        # Paste the three images
+                        comparison.paste(orig_pil, (10, 10))
+                        comparison.paste(pred_pil.convert('RGB'), (width + 10, 10))
+                        comparison.paste(true_pil.convert('RGB'), (2*width + 10, 10))
+                        
+                        # Add text labels
+                        draw = ImageDraw.Draw(comparison)
+                        draw.text((10, height + 10), "Original", fill="black")
+                        draw.text((width + 10, height + 10), f"Prediction", fill="black")
+                        draw.text((2*width + 10, height + 10), "Ground Truth", fill="black")
+                        draw.text((10, height + 20), f"Dice: {dice.item():.4f}", fill="black")
+                        
+                        # Save comparison
+                        comparison.save(os.path.join(output_dir, f"{safe_filename}_{dice.item():.2f}.png"))
+                        
+                    except Exception as save_error:
+                        log_message(f"Error saving segmentation maps for image {img_id}: {str(save_error)}", "ERROR", module, self.log_enabled, self.projectConfig)
+            
+            # Calculate average Dice score across all test images
+            avg_dice = total_dice / len(test_indices) if test_indices else 0.0
+            
+            log_message(f"Evaluation completed. Average Dice Score: {avg_dice:.4f}", "SUCCESS", module, self.log_enabled, self.projectConfig)
+            log_message(f"Segmentation maps saved to {output_dir}", "SUCCESS", module, self.log_enabled, self.projectConfig)
+            return avg_dice
+            
+        except Exception as e:
+            log_message(f"Error during evaluation: {str(e)}", "ERROR", module, self.log_enabled, self.projectConfig)
+            import traceback
+            traceback.print_exc()
+            return 0.0
         
     def getAverageDiceScore(self):
         """
@@ -215,7 +418,7 @@ class Agent_GraphMedNCA(BaseAgent):
         module = f"{__name__}" if self.log_enabled else ""
         
         if self.experiment is None:
-            log_message("Experiment not set. Call set_exp() before evaluation.", "ERROR", module, self.log_enabled)
+            log_message("Experiment not set. Call set_exp() before evaluation.", "ERROR", module, self.log_enabled, self.projectConfig)
             return 0.0
             
         # Set model to evaluation mode
@@ -236,22 +439,22 @@ class Agent_GraphMedNCA(BaseAgent):
                 try:
                     # Assuming the data_split object has a dictionary structure with 'test' key
                     test_indices = list(range(len(dataset)))[-int(len(dataset) * 0.3):]  # Use last 30% as test by default
-                    log_message("Using fallback test indices (last 30% of dataset)", "WARNING", module, self.log_enabled)
+                    log_message("Using fallback test indices (last 30% of dataset)", "WARNING", module, self.log_enabled, self.projectConfig)
                 except Exception as inner_e:
-                    log_message(f"Could not determine test indices: {str(inner_e)}", "ERROR", module, self.log_enabled)
+                    log_message(f"Could not determine test indices: {str(inner_e)}", "ERROR", module, self.log_enabled, self.projectConfig)
                     test_indices = []
             
             if not test_indices:
-                log_message("No test data available for evaluation", "WARNING", module, self.log_enabled)
+                log_message("No test data available for evaluation", "WARNING", module, self.log_enabled, self.projectConfig)
                 return 0.0
                 
-            log_message(f"Evaluating model on {len(test_indices)} test images", "INFO", module, self.log_enabled)
+            log_message(f"Evaluating model on {len(test_indices)} test images", "INFO", module, self.log_enabled, self.projectConfig)
             
             # Get inference steps from config
             steps = self.experiment.get_from_config('inference_steps')
             # if steps is None:
             #     steps = 64  # Default to 64 steps if not specified in config
-            #     log_message(f"No inference_steps in config, using default: {steps}", "WARNING", module, self.log_enabled)
+            #     log_message(f"No inference_steps in config, using default: {steps}", "WARNING", module, self.log_enabled, self.projectConfig)
             
             # Calculate Dice score for each test image
             total_dice = 0.0
@@ -271,7 +474,7 @@ class Agent_GraphMedNCA(BaseAgent):
                         img = item['image']
                         label = item['label']
                     else:
-                        log_message(f"Unsupported item format: {type(item)}", "ERROR", module, self.log_enabled)
+                        log_message(f"Unsupported item format: {type(item)}", "ERROR", module, self.log_enabled, self.projectConfig)
                         continue
                     
                     # Ensure proper tensor dimensions [batch, channel, height, width]
@@ -307,11 +510,11 @@ class Agent_GraphMedNCA(BaseAgent):
             # Calculate average Dice score across all test images
             avg_dice = total_dice / len(test_indices) if test_indices else 0.0
             
-            log_message(f"Evaluation completed. Average Dice Score: {avg_dice:.4f}", "SUCCESS", module, self.log_enabled)
+            log_message(f"Evaluation completed. Average Dice Score: {avg_dice:.4f}", "SUCCESS", module, self.log_enabled, self.projectConfig)
             return avg_dice
             
         except Exception as e:
-            log_message(f"Error during evaluation: {str(e)}", "ERROR", module, self.log_enabled)
+            log_message(f"Error during evaluation: {str(e)}", "ERROR", module, self.log_enabled, self.projectConfig)
             import traceback
             traceback.print_exc()
             return 0.0
@@ -338,7 +541,7 @@ class Agent_GraphMedNCA(BaseAgent):
         module = f"{__name__}" if self.log_enabled else ""
         
         if self.experiment is None:
-            log_message("Experiment not set. Call set_exp() before testing.", "ERROR", module, self.log_enabled)
+            log_message("Experiment not set. Call set_exp() before testing.", "ERROR", module, self.log_enabled, self.projectConfig)
             return
             
         # Create output directory if it doesn't exist
@@ -346,7 +549,7 @@ class Agent_GraphMedNCA(BaseAgent):
         
         # Check if test directory exists
         if not os.path.exists(test_dir):
-            log_message(f"Test directory not found: {test_dir}", "ERROR", module, self.log_enabled)
+            log_message(f"Test directory not found: {test_dir}", "ERROR", module, self.log_enabled, self.projectConfig)
             return
             
         # Set model to evaluation mode
@@ -356,7 +559,7 @@ class Agent_GraphMedNCA(BaseAgent):
         steps = self.experiment.get_from_config('inference_steps')
         # if steps is None:
         #     steps = 64  # Default to 64 steps if not specified in config
-        #     log_message(f"No inference_steps in config, using default: {steps}", "WARNING", module, self.log_enabled)
+        #     log_message(f"No inference_steps in config, using default: {steps}", "WARNING", module, self.log_enabled, self.projectConfig)
         
         # Get transforms from dataset or create default
         if hasattr(self.experiment.dataset, 'transform'):
@@ -378,7 +581,7 @@ class Agent_GraphMedNCA(BaseAgent):
             image_files = [os.path.join(test_dir, f) for f in os.listdir(test_dir)
                          if f.lower().endswith(('.png', '.jpg', '.jpeg', '.tif', '.bmp'))]
             
-        log_message(f"Found {len(image_files)} test images in {test_dir}", "INFO", module, self.log_enabled)
+        log_message(f"Found {len(image_files)} test images in {test_dir}", "INFO", module, self.log_enabled, self.projectConfig)
         
         # Process each test image
         with torch.no_grad():
@@ -434,11 +637,11 @@ class Agent_GraphMedNCA(BaseAgent):
                     output_path = os.path.join(output_dir, f"{filename}_mask.png")
                     mask_pil.save(output_path)
                     
-                    log_message(f"Saved mask for {filename} to {output_path}", "STATUS", module, self.log_enabled)
+                    log_message(f"Saved mask for {filename} to {output_path}", "STATUS", module, self.log_enabled, self.projectConfig)
                     
                 except Exception as e:
-                    log_message(f"Error processing {image_file}: {str(e)}", "ERROR", module, self.log_enabled)
+                    log_message(f"Error processing {image_file}: {str(e)}", "ERROR", module, self.log_enabled, self.projectConfig)
                     continue
                     
-        log_message(f"Testing completed. Saved masks to {output_dir}", "SUCCESS", module, self.log_enabled)
+        log_message(f"Testing completed. Saved masks to {output_dir}", "SUCCESS", module, self.log_enabled, self.projectConfig)
 
