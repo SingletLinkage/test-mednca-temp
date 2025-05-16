@@ -22,6 +22,9 @@ class Experiment():
             
         self.add_required_to_config()
         self.config = self.projectConfig[0]
+
+        # print(Fore.GREEN + Style.BRIGHT + "Experiment initialized with config: ", self.config, Style.RESET_ALL)
+
         self.dataset = dataset
         self.model = model
         self.agent = agent
@@ -105,6 +108,9 @@ class Experiment():
         self.projectConfig = load_json_file(os.path.join(self.config['model_path'], 'config.dt'))
         self.config = self.projectConfig[0]
         model_path = os.path.join(self.config['model_path'], 'models', 'epoch_' + str(self.currentStep))
+
+        if isinstance(self.config['input_size'], list):
+            self.config['input_size'] = tuple(self.config['input_size'])
         
         log_message(f"Looking for model at {model_path}", "INFO", module, self.log_enabled, self.projectConfig)
         if os.path.exists(model_path):

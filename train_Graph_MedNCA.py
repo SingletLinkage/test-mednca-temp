@@ -52,7 +52,7 @@ config = [{
     'img_path': r"/home/teaching/group21/Dataset/ISIC2018_Task1-2_Training_Input",
     'label_path': r"/home/teaching/group21/Dataset/ISIC2018_Task1_Training_GroundTruth",
     # 'model_path': r'/home/teaching/group21/med_nca/M3D-NCA/model_path',
-    'base_path': r'/home/teaching/group21/med_nca/M3D-NCA/runs',
+    'base_path': os.path.join(os.getcwd(), 'runs'),
     'device': "cuda",  # Use CPU for now for stability - change to cuda if needed
     'unlock_CPU': True,  # Add this to avoid thread limitation
     # Learning rate
@@ -60,10 +60,9 @@ config = [{
     'lr_gamma': 0.9999,
     'betas': (0.9, 0.99),
     # Training config
-    'save_interval': 10,
+    'save_interval': 5,
     'evaluate_interval': 2,
-    'n_epoch': 2,   # Reduced to test the setup first
-                    # was 16, changed for testing the eval part
+    'n_epoch': 25,   # Reduced to test the setup first
     'batch_size': 64,  # Reduced to avoid memory issues during debugging
     # Data
     'input_size': (64, 64),
@@ -77,7 +76,7 @@ config = [{
     'output_channels': 1,
     # Logging configuration
     'verbose_logging': True,
-    'inference_steps' : 16,
+    'inference_steps' : 32,
 }]
 
 

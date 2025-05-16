@@ -48,7 +48,7 @@ def log_message(message, msg_type="INFO", module="", log_enabled=True, config=No
 
     # TODO pass config into this so as to remove this hardcoded path
     if config is None:
-        runs_dir = '/home/teaching/group21/med_nca/M3D-NCA/runs'
+        runs_dir = os.path.join(os.getcwd(), 'runs')
         run_id = get_cur_run_id(runs_dir)
         model_path = os.path.join(runs_dir, f"model_{run_id}")
         log_dir = os.path.join(model_path, 'logs')

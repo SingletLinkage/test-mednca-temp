@@ -171,9 +171,9 @@ class BaseAgent():
     def load_state(self, model_path):
         r"""Load state of current model
         """
-        self.model.load_state_dict(torch.load(os.path.join(model_path, 'model.pth')))
-        self.optimizer.load_state_dict(torch.load(os.path.join(model_path, 'optimizer.pth')))
-        self.scheduler.load_state_dict(torch.load(os.path.join(model_path, 'scheduler.pth')))
+        self.model.load_state_dict(torch.load(model_path))
+        # self.optimizer.load_state_dict(torch.load(os.path.join(model_path, 'optimizer.pth')))
+        # self.scheduler.load_state_dict(torch.load(os.path.join(model_path, 'scheduler.pth')))
 
     def train(self, dataloader, loss_f):
         r"""Execute training of model

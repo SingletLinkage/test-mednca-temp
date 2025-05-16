@@ -187,7 +187,7 @@ class Agent_GraphMedNCA(BaseAgent):
                     batch_count += 1
                     
                     # Print occasional batch updates
-                    if batch_count % 2 == 0:
+                    if batch_count % 5 == 0:
                         log_message(f"Epoch {epoch+1}, Batch {batch_count}, Loss: {loss.item():.4f}", "STATUS", module, self.log_enabled, self.projectConfig)
                         
                 except Exception as e:
@@ -205,10 +205,14 @@ class Agent_GraphMedNCA(BaseAgent):
             
             # Process epoch (save checkpoints, etc.)
             self.process_epoch(epoch, avg_loss)
+
+        save_path = os.path.join(self.experiment.get_from_config('model_path'), 'models', f'epoch_{epoch}')
+        torch.save(self.model.state_dict(), save_path)
+        log_message(f"Final Model saved at epoch {epoch}", "SUCCESS", module, self.log_enabled, self.projectConfig)
             
         log_message(" Training completed! ", "SUCCESS", module, self.log_enabled, self.projectConfig)
 
-    def getAverageDiceScore_withimsave(self):
+    def getAverageDiceScore_withimsave(self, output_dir=None):
         """
         Evaluate model on test set using Dice score and save segmentation maps
         
@@ -220,10 +224,15 @@ class Agent_GraphMedNCA(BaseAgent):
             log_message("Experiment not set. Call set_exp() before evaluation.", "ERROR", module, self.log_enabled, self.projectConfig)
             return 0.0
             
-        # Create output directory for segmentation maps
-        output_dir = os.path.join(self.projectConfig[0]['model_path'], "outputs")
-        os.makedirs(output_dir, exist_ok=True)
-        log_message(f"Segmentation maps will be saved to {output_dir}", "INFO", module, self.log_enabled, self.projectConfig)
+        if output_dir is None:
+            # Create output directory for segmentation maps
+            output_dir = os.path.join(self.projectConfig[0]['model_path'], "outputs")
+            os.makedirs(output_dir, exist_ok=True)
+            log_message(f"Segmentation maps will be saved to {output_dir}", "INFO", module, self.log_enabled, self.projectConfig)
+        else:
+            # Ensure output directory exists
+            os.makedirs(output_dir, exist_ok=True)
+            log_message(f"Segmentation maps will be saved to {output_dir}", "INFO", module, self.log_enabled, self.projectConfig)
             
         # Set model to evaluation mode
         self.model.eval()
@@ -262,7 +271,7 @@ class Agent_GraphMedNCA(BaseAgent):
             
             # For saving images
             import numpy as np
-            from PIL import Image
+            import matplotlib.pyplot as plt
             
             # Calculate Dice score for each test image
             total_dice = 0.0
@@ -320,7 +329,7 @@ class Agent_GraphMedNCA(BaseAgent):
                     total_dice += dice.item()
                     
                     # Log dice score periodically
-                    if idx % 4 == 0:
+                    if idx % 10 == 0:
                         log_message(f"Test image {idx}: Dice score = {dice.item():.4f} (steps={steps})", "INFO", module, self.log_enabled, self.projectConfig)
                     
                     # Save segmentation maps and original images
@@ -336,64 +345,53 @@ class Agent_GraphMedNCA(BaseAgent):
                         pred_mask = prediction_binary[0].cpu().numpy()
                         true_mask = label[0].cpu().numpy()
                         
-                        # Handle multi-channel images by taking first channel or converting to RGB
+                        # Handle multi-channel images
                         if orig_img.shape[0] > 1:  # Multi-channel
                             if orig_img.shape[0] == 3:  # RGB
-                                # Transpose from (C,H,W) to (H,W,C) for PIL
+                                # Transpose from (C,H,W) to (H,W,C) for matplotlib
                                 orig_img = np.transpose(orig_img, (1, 2, 0))
-                                orig_img = (orig_img * 255).astype(np.uint8)
-                                orig_pil = Image.fromarray(orig_img)
                             else:
                                 # Just take first channel
                                 orig_img = orig_img[0]
-                                orig_img = (orig_img * 255).astype(np.uint8)
-                                orig_pil = Image.fromarray(orig_img)
                         else:
                             orig_img = orig_img[0]
-                            orig_img = (orig_img * 255).astype(np.uint8)
-                            orig_pil = Image.fromarray(orig_img)
                             
                         # Prepare mask images (take first channel if multiple)
                         if len(pred_mask.shape) > 2 and pred_mask.shape[0] > 0:
                             pred_mask = pred_mask[0]
                         if len(true_mask.shape) > 2 and true_mask.shape[0] > 0:
                             true_mask = true_mask[0]
-                            
-                        # Convert masks to 8-bit images
-                        pred_mask_img = (pred_mask * 255).astype(np.uint8)
-                        true_mask_img = (true_mask * 255).astype(np.uint8)
                         
-                        # Create PIL images
-                        pred_pil = Image.fromarray(pred_mask_img)
-                        true_pil = Image.fromarray(true_mask_img)
+                        # Create matplotlib figure with subplots
+                        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
                         
-                        # Save all images
-                        # orig_pil.save(os.path.join(output_dir, f"{safe_filename}_original.png"))
-                        # pred_pil.save(os.path.join(output_dir, f"{safe_filename}_prediction.png"))
-                        # true_pil.save(os.path.join(output_dir, f"{safe_filename}_ground_truth.png"))
+                        # Plot original image
+                        if len(orig_img.shape) == 3:  # Color image
+                            axes[0].imshow(orig_img)
+                        else:  # Grayscale
+                            axes[0].imshow(orig_img, cmap='gray')
+                        axes[0].set_title("Original")
+                        axes[0].axis('off')
                         
-                        # Create a side-by-side comparison image
-                        from PIL import Image, ImageDraw
+                        # Plot prediction
+                        axes[1].imshow(pred_mask, cmap='gray')
+                        axes[1].set_title("Prediction")
+                        axes[1].axis('off')
                         
-                        # Create a new wide image to hold all three images
-                        width = max(orig_img.shape[1], pred_mask_img.shape[1], true_mask_img.shape[1])
-                        height = max(orig_img.shape[0], pred_mask_img.shape[0], true_mask_img.shape[0])
-                        comparison = Image.new('RGB', (width*3 + 20, height + 30), color='white')
+                        # Plot ground truth
+                        axes[2].imshow(true_mask, cmap='gray')
+                        axes[2].set_title("Ground Truth")
+                        axes[2].axis('off')
                         
-                        # Paste the three images
-                        comparison.paste(orig_pil, (10, 10))
-                        comparison.paste(pred_pil.convert('RGB'), (width + 10, 10))
-                        comparison.paste(true_pil.convert('RGB'), (2*width + 10, 10))
+                        # Add Dice score as text
+                        plt.figtext(0.5, 0.001, f"Dice Score: {dice.item():.4f}", ha="center", fontsize=12,
+                                  bbox={"facecolor":"orange", "alpha":0.8, "pad":5})
                         
-                        # Add text labels
-                        draw = ImageDraw.Draw(comparison)
-                        draw.text((10, height + 10), "Original", fill="black")
-                        draw.text((width + 10, height + 10), f"Prediction", fill="black")
-                        draw.text((2*width + 10, height + 10), "Ground Truth", fill="black")
-                        draw.text((10, height + 20), f"Dice: {dice.item():.4f}", fill="black")
-                        
-                        # Save comparison
-                        comparison.save(os.path.join(output_dir, f"{safe_filename}_{dice.item():.2f}.png"))
+                        # Save figure
+                        plt.tight_layout()
+                        save_path = os.path.join(output_dir, f"{safe_filename}_{dice.item():.2f}.png")
+                        plt.savefig(save_path, bbox_inches='tight')
+                        plt.close(fig)
                         
                     except Exception as save_error:
                         log_message(f"Error saving segmentation maps for image {img_id}: {str(save_error)}", "ERROR", module, self.log_enabled, self.projectConfig)
@@ -523,11 +521,7 @@ class Agent_GraphMedNCA(BaseAgent):
         """
         Create segmentation maps for test images and save them to the output directory
         
-        A
-
-
- 
- gs:
+        Args:
             test_dir (str): Directory containing test images
             output_dir (str): Directory to save segmentation maps
             file_pattern (str, optional): File pattern to match test images (e.g., '*.jpg')
@@ -535,7 +529,8 @@ class Agent_GraphMedNCA(BaseAgent):
         """
         import os
         import numpy as np
-        from PIL import Image
+        import matplotlib.pyplot as plt
+        from PIL import Image  # Still need PIL for loading images
         import torchvision.transforms as transforms
         
         module = f"{__name__}" if self.log_enabled else ""
@@ -557,9 +552,6 @@ class Agent_GraphMedNCA(BaseAgent):
         
         # Get inference steps from config
         steps = self.experiment.get_from_config('inference_steps')
-        # if steps is None:
-        #     steps = 64  # Default to 64 steps if not specified in config
-        #     log_message(f"No inference_steps in config, using default: {steps}", "WARNING", module, self.log_enabled, self.projectConfig)
         
         # Get transforms from dataset or create default
         if hasattr(self.experiment.dataset, 'transform'):
@@ -627,15 +619,16 @@ class Agent_GraphMedNCA(BaseAgent):
                     if len(mask.shape) > 2 and mask.shape[0] == 1:
                         mask = mask[0]
                     
-                    # Scale to 0-255 for saving as image
-                    mask_img = (mask * 255).astype(np.uint8)
-                    
-                    # Create PIL image and save
-                    mask_pil = Image.fromarray(mask_img)
+                    # Create figure and save using matplotlib
+                    fig, ax = plt.subplots(figsize=(8, 8))
+                    ax.imshow(mask, cmap='gray')
+                    ax.axis('off')
+                    plt.tight_layout()
                     
                     # Save to output directory
                     output_path = os.path.join(output_dir, f"{filename}_mask.png")
-                    mask_pil.save(output_path)
+                    plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
+                    plt.close(fig)
                     
                     log_message(f"Saved mask for {filename} to {output_path}", "STATUS", module, self.log_enabled, self.projectConfig)
                     

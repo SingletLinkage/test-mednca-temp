@@ -5,7 +5,8 @@ from torch_geometric.nn import GATConv, knn_graph
 from torch_geometric.data import Data
 from colorama import Fore, Back, Style
 from src.utils.helper import log_message
-
+from matplotlib import pyplot as plt
+import numpy as np
 
 class GrapherModule(nn.Module):
     def __init__(self, in_channels, out_channels, num_heads=4):
@@ -15,6 +16,43 @@ class GrapherModule(nn.Module):
     def forward(self, x, edge_index):
         x = self.gat(x, edge_index)
         return F.relu(x)
+    
+def visualize_graph(self, image_tensor, edge_index, epoch, num_nodes=50):
+        """Visualize graph connections on image patches"""
+        plt.figure(figsize=(10, 10))
+        
+        # Convert tensor to numpy image (handle both 1-channel and 3-channel)
+        img = image_tensor.cpu()
+        if img.shape[0] == 1:
+            img = img.repeat(3, 1, 1)  # Convert to RGB
+        img = img.permute(1, 2, 0).numpy()
+        plt.imshow(img)
+        
+        # Get node positions
+        H, W = image_tensor.shape[1], image_tensor.shape[2]
+        coords = torch.stack(torch.meshgrid(
+            torch.linspace(0, 1, H, device='cpu'),
+            torch.linspace(0, 1, W, device='cpu'),
+            indexing='ij'
+        ), dim=-1).view(H*W, 2)
+        
+        # Plot subset of nodes and connections
+        nodes = np.random.choice(len(coords), min(num_nodes, len(coords)))
+        for node in nodes:
+            x, y = coords[node]
+            plt.scatter(y*W, x*H, c='red', s=10)
+            
+            # Plot connections (limit to 4 for clarity)
+            neighbors = edge_index[1][edge_index[0] == node]
+            for neighbor in neighbors[:4]:
+                nx, ny = coords[neighbor]
+                plt.plot([y*W, ny*W], [x*H, nx*H], 'r-', alpha=0.3)
+                
+        plt.title(f'Graph Connections - Epoch {epoch+1}')
+        plt.axis('off')
+        plt.savefig(f'./graphs/graph_vis_epoch_{epoch+1}.png')
+        plt.close()
+
 
 def image_to_graph(feature_map, k=8, log_enabled=False):
     B, C, H, W = feature_map.size()
